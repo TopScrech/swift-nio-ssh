@@ -65,7 +65,7 @@ final class RSAKeyTests: XCTestCase {
         let sshKey = NIOSSHPrivateKey(rsaKey: rsaKey)
 
         let digest = SHA256.hash(data: Array("simulated exchange hash".utf8))
-        let signature = try sshKey.sign(digest: digest)
+        let signature = try sshKey.sign(digest: digest, rsaSignatureAlgorithm: .sha256)
 
         // Verify the signature type is rsaSHA256, not rsaSHA512
         switch signature.backingSignature {

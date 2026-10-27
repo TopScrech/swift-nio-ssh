@@ -107,7 +107,7 @@ extension NIOSSHPrivateKey {
 }
 
 extension NIOSSHPrivateKey {
-    func sign<DigestBytes: Digest>(digest: DigestBytes) throws -> NIOSSHSignature {
+    func sign<DigestBytes: Digest>(digest: DigestBytes, rsaSignatureAlgorithm: RSASignatureAlgorithm = .sha512) throws -> NIOSSHSignature {
         switch self.backingKey {
         case .ed25519(let key):
             let signature = try digest.withUnsafeBytes { ptr in
@@ -130,22 +130,8 @@ extension NIOSSHPrivateKey {
             }
             return NIOSSHSignature(backingSignature: .ecdsaP521(signature))
         case .rsa(let key):
-            // For RSA, the signature algorithm identifier should match the digest type.
-            // Per RFC 8332, we support rsa-sha2-256 and rsa-sha2-512.
-            // SHA-384 is not defined in SSH, so we use rsa-sha2-512 as the strongest available.
-            let signature = try key.signature(for: digest, padding: .insecurePKCS1v1_5)
-            
-            switch DigestBytes.byteCount {
-            case SHA256.byteCount:
-                return NIOSSHSignature(backingSignature: .rsaSHA256(signature))
-            case SHA384.byteCount:
-                // SHA-384 has no SSH algorithm; use strongest available (rsa-sha2-512)
-                return NIOSSHSignature(backingSignature: .rsaSHA512(signature))
-            case SHA512.byteCount:
-                return NIOSSHSignature(backingSignature: .rsaSHA512(signature))
-            default:
-                // For any other digest size (including SHA-1's 20 bytes), use SHA-512
-                return NIOSSHSignature(backingSignature: .rsaSHA512(signature))
+            return try digest.withUnsafeBytes { bytes in
+                try Self.signRSA(bytes, key: key, algorithm: rsaSignatureAlgorithm)
             }
 
         #if canImport(Darwin)
@@ -173,22 +159,7 @@ extension NIOSSHPrivateKey {
             let signature = try key.signature(for: payload.bytes.readableBytesView)
             return NIOSSHSignature(backingSignature: .ecdsaP521(signature))
         case .rsa(let key):
-            // Sign using the specified RSA algorithm (RFC 8332)
-            let bytesView = payload.bytes.readableBytesView
-            switch rsaSignatureAlgorithm {
-            case .sha512:
-                let digest = SHA512.hash(data: bytesView)
-                let signature = try key.signature(for: digest, padding: .insecurePKCS1v1_5)
-                return NIOSSHSignature(backingSignature: .rsaSHA512(signature))
-            case .sha256:
-                let digest = SHA256.hash(data: bytesView)
-                let signature = try key.signature(for: digest, padding: .insecurePKCS1v1_5)
-                return NIOSSHSignature(backingSignature: .rsaSHA256(signature))
-            case .sha1:
-                let digest = Insecure.SHA1.hash(data: bytesView)
-                let signature = try key.signature(for: digest, padding: .insecurePKCS1v1_5)
-                return NIOSSHSignature(backingSignature: .rsaSHA1(signature))
-            }
+            return try Self.signRSA(payload.bytes.readableBytesView, key: key, algorithm: rsaSignatureAlgorithm)
         #if canImport(Darwin)
         case .secureEnclaveP256(let key):
             let signature = try key.signature(for: payload.bytes.readableBytesView)
@@ -197,34 +168,22 @@ extension NIOSSHPrivateKey {
         }
     }
 
-    /// Sign a payload with a specific RSA signature algorithm.
-    ///
-    /// This is used when the server negotiates a specific RSA algorithm (ssh-rsa, rsa-sha2-256, rsa-sha2-512).
-    func signRSA(_ payload: UserAuthSignablePayload, algorithm: Substring) throws -> NIOSSHSignature {
-        guard case .rsa(let key) = self.backingKey else {
-            preconditionFailure("signRSA called on non-RSA key")
-        }
-
-        let bytesView = payload.bytes.readableBytesView
-
+    private static func signRSA<Bytes: DataProtocol>(
+        _ bytes: Bytes, key: _RSA.Signing.PrivateKey, algorithm: RSASignatureAlgorithm
+    ) throws -> NIOSSHSignature {
         switch algorithm {
-        case "ssh-rsa":
-            // ssh-rsa uses SHA-1 (deprecated but still used for compatibility)
-            let digest = Insecure.SHA1.hash(data: bytesView)
-            let signature = try key.signature(for: digest, padding: .insecurePKCS1v1_5)
-            return NIOSSHSignature(backingSignature: .rsaSHA1(signature))
-        case "rsa-sha2-256":
-            let digest = SHA256.hash(data: bytesView)
-            let signature = try key.signature(for: digest, padding: .insecurePKCS1v1_5)
-            return NIOSSHSignature(backingSignature: .rsaSHA256(signature))
-        case "rsa-sha2-512":
-            let digest = SHA512.hash(data: bytesView)
-            let signature = try key.signature(for: digest, padding: .insecurePKCS1v1_5)
-            return NIOSSHSignature(backingSignature: .rsaSHA512(signature))
-        default:
-            preconditionFailure("Unknown RSA algorithm: \(algorithm)")
+        case .sha512:
+            return NIOSSHSignature(backingSignature: .rsaSHA512(
+                try key.signature(for: SHA512.hash(data: bytes), padding: .insecurePKCS1v1_5)))
+        case .sha256:
+            return NIOSSHSignature(backingSignature: .rsaSHA256(
+                try key.signature(for: SHA256.hash(data: bytes), padding: .insecurePKCS1v1_5)))
+        case .sha1:
+            return NIOSSHSignature(backingSignature: .rsaSHA1(
+                try key.signature(for: Insecure.SHA1.hash(data: bytes), padding: .insecurePKCS1v1_5)))
         }
     }
+
 }
 
 extension NIOSSHPrivateKey {

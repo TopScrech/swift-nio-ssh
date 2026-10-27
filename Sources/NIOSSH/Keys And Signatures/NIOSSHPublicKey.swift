@@ -96,11 +96,17 @@ extension NIOSSHPublicKey {
                 key.isValidSignature(sig, for: digestPtr)
             }
         case (.rsa(let key), .rsaSHA1(let sig)):
-            return key.isValidSignature(sig, for: digest, padding: .insecurePKCS1v1_5)
+            return digest.withUnsafeBytes { bytes in
+                key.isValidSignature(sig, for: Insecure.SHA1.hash(data: bytes), padding: .insecurePKCS1v1_5)
+            }
         case (.rsa(let key), .rsaSHA256(let sig)):
-            return key.isValidSignature(sig, for: digest, padding: .insecurePKCS1v1_5)
+            return digest.withUnsafeBytes { bytes in
+                key.isValidSignature(sig, for: SHA256.hash(data: bytes), padding: .insecurePKCS1v1_5)
+            }
         case (.rsa(let key), .rsaSHA512(let sig)):
-            return key.isValidSignature(sig, for: digest, padding: .insecurePKCS1v1_5)
+            return digest.withUnsafeBytes { bytes in
+                key.isValidSignature(sig, for: SHA512.hash(data: bytes), padding: .insecurePKCS1v1_5)
+            }
         case (.certified(let key), _):
             return key.isValidSignature(signature, for: digest)
         case (.ed25519, _),
@@ -255,10 +261,18 @@ extension NIOSSHPublicKey {
         }
     }
 
+    internal func supportsSignatureAlgorithm<Bytes: Collection>(_ algorithm: Bytes) -> Bool where Bytes.Element == UInt8 {
+        if case .rsa = self.backingKey {
+            return RSASignatureAlgorithm(algorithmName: algorithm) != nil
+        }
+        return self.keyPrefix.elementsEqual(algorithm)
+    }
+
     internal static var knownAlgorithms: [String.UTF8View] {
         [
             Self.ed25519PublicKeyPrefix, Self.ecdsaP384PublicKeyPrefix, Self.ecdsaP256PublicKeyPrefix,
             Self.ecdsaP521PublicKeyPrefix, Self.rsaPublicKeyPrefix,
+            "rsa-sha2-256".utf8, "rsa-sha2-512".utf8,
         ]
     }
 }
@@ -539,6 +553,13 @@ extension ByteBuffer {
         guard let eBytes = self.readSSHString(),
               let nBytes = self.readSSHString() else {
             return nil
+        }
+
+        for integer in [eBytes, nBytes] {
+            guard let first = integer.readableBytesView.first, first & 0x80 == 0,
+                integer.readableBytesView.contains(where: { $0 != 0 }) else {
+                throw NIOSSHError.invalidSSHMessage(reason: "RSA parameters must be positive mpints")
+            }
         }
 
         let key = try _RSA.Signing.PublicKey(

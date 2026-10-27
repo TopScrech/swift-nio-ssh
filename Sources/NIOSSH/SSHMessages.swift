@@ -149,7 +149,7 @@ extension SSHMessage {
         }
 
         enum PublicKeyAuthType: Equatable {
-            case known(key: NIOSSHPublicKey, signature: NIOSSHSignature?, rsaSignatureAlgorithm: RSASignatureAlgorithm)
+            case known(key: NIOSSHPublicKey, signature: NIOSSHSignature?, rsaSignatureAlgorithm: RSASignatureAlgorithm = .sha512)
             case unknown
         }
 
@@ -186,6 +186,7 @@ extension SSHMessage {
         static let id: UInt8 = 60
 
         var key: NIOSSHPublicKey
+        var rsaSignatureAlgorithm: RSASignatureAlgorithm = .sha512
     }
 
     struct GlobalRequestMessage: Equatable {
@@ -694,7 +695,7 @@ extension ByteBuffer {
                         return nil
                     }
 
-                    guard algorithmName.readableBytesView.elementsEqual(publicKey.keyPrefix) else {
+                    guard publicKey.supportsSignatureAlgorithm(algorithmName.readableBytesView) else {
                         throw NIOSSHError.invalidSSHMessage(reason: "algorithm and key mismatch in user auth request")
                     }
 
@@ -708,6 +709,9 @@ extension ByteBuffer {
                             return nil
                         }
 
+                        guard signature.rsaAlgorithm == RSASignatureAlgorithm(algorithmName: algorithmName.readableBytesView) else {
+                            throw NIOSSHError.invalidSSHMessage(reason: "RSA signature algorithm mismatch")
+                        }
                         method = .publicKey(.known(key: publicKey, signature: signature, rsaSignatureAlgorithm: rsaAlgorithm))
                     } else {
                         method = .publicKey(.known(key: publicKey, signature: nil, rsaSignatureAlgorithm: rsaAlgorithm))
@@ -774,11 +778,11 @@ extension ByteBuffer {
             }
 
             // Validate consistency here.
-            guard publicKeyType.readableBytesView.elementsEqual(publicKey.keyPrefix) else {
+            guard publicKey.supportsSignatureAlgorithm(publicKeyType.readableBytesView) else {
                 throw NIOSSHError.invalidSSHMessage(reason: "inconsistent key type")
             }
 
-            return .init(key: publicKey)
+            return .init(key: publicKey, rsaSignatureAlgorithm: RSASignatureAlgorithm(algorithmName: publicKeyType.readableBytesView) ?? .sha512)
         }
     }
 
@@ -1410,7 +1414,7 @@ extension ByteBuffer {
 
     mutating func writeUserAuthPKOKMessage(_ message: SSHMessage.UserAuthPKOKMessage) -> Int {
         var writtenBytes = 0
-        writtenBytes += self.writeSSHString(message.key.keyPrefix)
+        writtenBytes += self.writeSSHString(message.key.algorithmName(forRSA: message.rsaSignatureAlgorithm))
         writtenBytes += self.writeCompositeSSHString { buffer in
             buffer.writeSSHHostKey(message.key)
         }

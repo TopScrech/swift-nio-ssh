@@ -32,6 +32,15 @@ public struct NIOSSHSignature: Hashable, Sendable {
 
 // swift-format-ignore: DontRepeatTypeInStaticProperties
 extension NIOSSHSignature {
+    internal var rsaAlgorithm: RSASignatureAlgorithm? {
+        switch self.backingSignature {
+        case .rsaSHA1: return .sha1
+        case .rsaSHA256: return .sha256
+        case .rsaSHA512: return .sha512
+        default: return nil
+        }
+    }
+
     /// The various signature types that can be used with NIOSSH.
     internal enum BackingSignature: Sendable {
         // There is no structured Signature type for Curve25519, and we may want Data or ByteBuffer.
