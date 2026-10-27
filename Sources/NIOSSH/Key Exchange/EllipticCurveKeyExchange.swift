@@ -330,110 +330,44 @@ extension EllipticCurveKeyExchange {
         }
     }
 
-    private func generateClientToServerIV(
-        baseHasher: PrivateKey.Hasher,
-        sessionID: ByteBuffer,
-        expectedKeySize: Int
-    ) -> [UInt8] {
-        assert(expectedKeySize <= PrivateKey.Hasher.Digest.byteCount)
-        return Array(
-            self.generateSpecificHash(
-                baseHasher: baseHasher,
-                discriminatorByte: UInt8(ascii: "A"),
-                sessionID: sessionID
-            ).prefix(expectedKeySize)
-        )
+    private func generateClientToServerIV(baseHasher: PrivateKey.Hasher, sessionID: ByteBuffer, expectedKeySize: Int) -> [UInt8] {
+        Self.deriveKey(baseHasher: baseHasher, discriminatorByte: UInt8(ascii: "A"), sessionID: sessionID, length: expectedKeySize)
     }
 
-    private func generateServerToClientIV(
-        baseHasher: PrivateKey.Hasher,
-        sessionID: ByteBuffer,
-        expectedKeySize: Int
-    ) -> [UInt8] {
-        assert(expectedKeySize <= PrivateKey.Hasher.Digest.byteCount)
-        return Array(
-            self.generateSpecificHash(
-                baseHasher: baseHasher,
-                discriminatorByte: UInt8(ascii: "B"),
-                sessionID: sessionID
-            ).prefix(expectedKeySize)
-        )
+    private func generateServerToClientIV(baseHasher: PrivateKey.Hasher, sessionID: ByteBuffer, expectedKeySize: Int) -> [UInt8] {
+        Self.deriveKey(baseHasher: baseHasher, discriminatorByte: UInt8(ascii: "B"), sessionID: sessionID, length: expectedKeySize)
     }
 
-    private func generateClientToServerEncryptionKey(
-        baseHasher: PrivateKey.Hasher,
-        sessionID: ByteBuffer,
-        expectedKeySize: Int
-    ) -> SymmetricKey {
-        assert(expectedKeySize <= PrivateKey.Hasher.Digest.byteCount)
-        return SymmetricKey.truncatingDigest(
-            self.generateSpecificHash(
-                baseHasher: baseHasher,
-                discriminatorByte: UInt8(ascii: "C"),
-                sessionID: sessionID
-            ),
-            length: expectedKeySize
-        )
+    private func generateClientToServerEncryptionKey(baseHasher: PrivateKey.Hasher, sessionID: ByteBuffer, expectedKeySize: Int) -> SymmetricKey {
+        SymmetricKey(data: Self.deriveKey(baseHasher: baseHasher, discriminatorByte: UInt8(ascii: "C"), sessionID: sessionID, length: expectedKeySize))
     }
 
-    private func generateServerToClientEncryptionKey(
-        baseHasher: PrivateKey.Hasher,
-        sessionID: ByteBuffer,
-        expectedKeySize: Int
-    ) -> SymmetricKey {
-        assert(expectedKeySize <= PrivateKey.Hasher.Digest.byteCount)
-        return SymmetricKey.truncatingDigest(
-            self.generateSpecificHash(
-                baseHasher: baseHasher,
-                discriminatorByte: UInt8(ascii: "D"),
-                sessionID: sessionID
-            ),
-            length: expectedKeySize
-        )
+    private func generateServerToClientEncryptionKey(baseHasher: PrivateKey.Hasher, sessionID: ByteBuffer, expectedKeySize: Int) -> SymmetricKey {
+        SymmetricKey(data: Self.deriveKey(baseHasher: baseHasher, discriminatorByte: UInt8(ascii: "D"), sessionID: sessionID, length: expectedKeySize))
     }
 
-    private func generateClientToServerMACKey(
-        baseHasher: PrivateKey.Hasher,
-        sessionID: ByteBuffer,
-        expectedKeySize: Int
-    ) -> SymmetricKey {
-        assert(expectedKeySize <= PrivateKey.Hasher.Digest.byteCount)
-        return SymmetricKey.truncatingDigest(
-            self.generateSpecificHash(
-                baseHasher: baseHasher,
-                discriminatorByte: UInt8(ascii: "E"),
-                sessionID: sessionID
-            ),
-            length: expectedKeySize
-        )
+    private func generateClientToServerMACKey(baseHasher: PrivateKey.Hasher, sessionID: ByteBuffer, expectedKeySize: Int) -> SymmetricKey {
+        SymmetricKey(data: Self.deriveKey(baseHasher: baseHasher, discriminatorByte: UInt8(ascii: "E"), sessionID: sessionID, length: expectedKeySize))
     }
 
-    private func generateServerToClientMACKey(
-        baseHasher: PrivateKey.Hasher,
-        sessionID: ByteBuffer,
-        expectedKeySize: Int
-    ) -> SymmetricKey {
-        assert(expectedKeySize <= PrivateKey.Hasher.Digest.byteCount)
-        return SymmetricKey.truncatingDigest(
-            self.generateSpecificHash(
-                baseHasher: baseHasher,
-                discriminatorByte: UInt8(ascii: "F"),
-                sessionID: sessionID
-            ),
-            length: expectedKeySize
-        )
+    private func generateServerToClientMACKey(baseHasher: PrivateKey.Hasher, sessionID: ByteBuffer, expectedKeySize: Int) -> SymmetricKey {
+        SymmetricKey(data: Self.deriveKey(baseHasher: baseHasher, discriminatorByte: UInt8(ascii: "F"), sessionID: sessionID, length: expectedKeySize))
     }
 
-    private func generateSpecificHash(
-        baseHasher: PrivateKey.Hasher,
-        discriminatorByte: UInt8,
-        sessionID: ByteBuffer
-    ) -> PrivateKey.Hasher.Digest {
-        var localHasher = baseHasher
-        localHasher.update(byte: discriminatorByte)
-        localHasher.update(data: sessionID.readableBytesView)
-        return localHasher.finalize()
+    // RFC 4253 section 7.2 expands keys beyond the exchange hash length
+    static func deriveKey(baseHasher: PrivateKey.Hasher, discriminatorByte: UInt8, sessionID: ByteBuffer, length: Int) -> [UInt8] {
+        var first = baseHasher
+        first.update(byte: discriminatorByte)
+        first.update(data: sessionID.readableBytesView)
+        var bytes = Array(first.finalize())
+        while bytes.count < length {
+            var next = baseHasher
+            next.update(data: bytes)
+            bytes.append(contentsOf: next.finalize())
+        }
+        return Array(bytes.prefix(length))
     }
+
 }
 
 extension EllipticCurveKeyExchange {
